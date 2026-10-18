@@ -1,6 +1,7 @@
-# Hostel Management System
+# PC503 - Assignment 8: Hostel Management System with GUI
 
-A small Python assignment using Tkinter and SQLite. It runs on one computer and uses only the Python standard library.
+Student ID: 202611013, 202611016, 202611019
+
 
 ## Run
 
@@ -13,12 +14,24 @@ On first launch, create an administrator account. Then log in and follow this or
 ```text
 Admin → Add warden → Add hostel → Add room
       → Register resident → Allocate room
-      → Generate monthly fee → Record payment → Check out
+      → Generate monthly fee → Record payment → Transfer or check out
 ```
 
-An admin can use every hostel. A warden can register residents, assign rooms and record fees only in their assigned hostels. A resident can view their own room, charges and payments. Room transfers are within the same hostel. Checkout requires full payment. A room's monthly fee is charged once for each occupied month; partial payments are allowed.
+An admin can use every hostel, change a warden's or resident's password, and change a hostel/block's assigned warden. A warden can register residents, assign rooms and record fees only in their assigned hostels. A resident can view their own room, hostel, warden, charges and payments.
 
-The database file is `data/hostel.db`. Existing records from the previous version are kept. For a separate demonstration database, run `python main.py --db demo.db`.
+Room transfers stay within one hostel and require all posted and missing monthly fees to be paid first. The destination room's rate applies to future months; the first room occupied in a month sets that month's charge. Checkout also requires full payment. Partial payments are allowed.
+
+The database file is `data/hostel.db`.
+
+## Demo data
+
+Close the app, then import [demo_seed.sql](demo_seed.sql) into the main database:
+
+```powershell
+sqlite3 -bail .\data\hostel.db ".read demo_seed.sql"
+```
+
+This adds one warden, one hostel/block, three rooms, and three residents with charges and payments. All four demo accounts (`demo_warden`, `demo_asha`, `demo_rahul`, `demo_neha`) use password `Demo@12345`. Asha has ₹3,000 outstanding; Rahul has a room-transfer history; Neha has checked out. Running the import again does not duplicate the demo rows.
 
 ## Codebase
 

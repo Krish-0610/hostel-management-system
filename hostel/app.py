@@ -99,6 +99,7 @@ class HostelApp:
             return result
         except (ValueError, sqlite3.Error) as exc:
             messagebox.showerror("Cannot complete action", str(exc))
+            self.show_home()
             return None
 
     def form(self, title, fields, save):
@@ -139,10 +140,15 @@ class HostelApp:
             dialog.destroy()
             self.show_home()
 
+        def close():
+            dialog.destroy()
+            self.show_home()
+
         buttons = ttk.Frame(frame)
         buttons.pack(pady=(14, 0))
         ttk.Button(buttons, text="Save", command=submit).pack(side="left", padx=5)
-        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
+        ttk.Button(buttons, text="Cancel", command=close).pack(side="left", padx=5)
+        dialog.protocol("WM_DELETE_WINDOW", close)
         if widgets:
             next(iter(widgets.values())).focus_set()
 
@@ -173,9 +179,10 @@ class HostelApp:
         buttons.pack(fill="x")
         ttk.Button(buttons, text="Add warden", command=lambda: self.form("Add warden", [
             ("username", "Username", None), ("password", "Password", None),
-            ("name", "Full name", None), ("employee", "Employee no.", None)],
+            ("name", "Full name", None), ("employee", "Employee no.", None),
+            ("phone", "Phone (optional)", None)],
             lambda v: self.hostel.add_warden(self.token, v["username"], v["password"],
-                                             v["name"], v["employee"]))).pack(side="left", padx=4)
+                                             v["name"], v["employee"], v["phone"]))).pack(side="left", padx=4)
         ttk.Button(buttons, text="Add hostel", command=lambda: self.form("Add hostel", [
             ("code", "Code", None), ("name", "Name", None), ("address", "Address", None),
             ("warden", "Warden", [(f"{w['full_name']} ({w['employee_no']})", w["warden_id"])
@@ -189,25 +196,64 @@ class HostelApp:
             ("fee", "Monthly fee (₹)", None)],
             lambda v: self.hostel.add_room(self.token, v["hostel"], v["number"],
                                            v["capacity"], v["fee"]))).pack(side="left", padx=4)
+        accounts = [(f"Warden · {w['full_name']} ({w['username']})", w["warden_id"])
+                    for w in wardens]
+        accounts += [(f"Resident · {r['full_name']} ({r['username']})", r["resident_id"])
+                     for r in self.hostel.residents(self.token)]
+        ttk.Button(buttons, text="Change password", command=lambda: self.form(
+            "Change account password", [("account", "Account", accounts),
+                                        ("password", "New password", None)],
+            lambda v: self.auth.reset_password(self.token, v["account"],
+                                               v["password"]))).pack(side="left", padx=4)
         ttk.Label(page, text="Wardens").pack(anchor="w", pady=(15, 0))
-        self.table(page, [("name", "Name"), ("employee", "Employee no.")],
-                   [(w["warden_id"], (w["full_name"], w["employee_no"])) for w in wardens], 4)
-        ttk.Label(page, text="Hostels and rooms").pack(anchor="w")
+        self.table(page, [("name", "Name"), ("employee", "Employee no."),
+                          ("phone", "Phone")],
+                   [(w["warden_id"], (w["full_name"], w["employee_no"],
+                                      w["phone"] or "—")) for w in wardens], 3)
+        hostel_row = ttk.Frame(page)
+        hostel_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(hostel_row, text="Hostel / block assignments").pack(side="left")
+        hostel_table = self.table(page, [("code", "Code"), ("name", "Hostel / block"),
+                                         ("address", "Address"), ("warden", "Warden")],
+                                  [(h["hostel_id"], (h["hostel_code"], h["name"],
+                                                      h["address"], h["warden_name"]))
+                                   for h in hostels], 4)
+
+        def change_warden():
+            try:
+                hostel_id = self.selected(hostel_table, "hostel")
+                choices = [(f"{w['full_name']} ({w['employee_no']})", w["warden_id"])
+                           for w in wardens if w["is_active"]]
+                self.form("Assign warden", [("warden", "Warden", choices)],
+                          lambda v: self.hostel.assign_warden(self.token, hostel_id,
+                                                                v["warden"]))
+            except ValueError as exc:
+                messagebox.showerror("Cannot continue", str(exc))
+
+        ttk.Button(hostel_row, text="Change assigned warden", command=change_warden).pack(
+            side="right")
+        ttk.Label(page, text="Rooms").pack(anchor="w", pady=(8, 0))
         self.table(page, [("hostel", "Hostel"), ("room", "Room"), ("beds", "Occupied / beds"),
                           ("fee", "Monthly fee")],
                    [(r["room_id"], (r["hostel_code"], r["room_number"],
                                     f"{r['occupied']} / {r['capacity']}",
-                                    money(r["monthly_fee_paise"]))) for r in rooms], 8)
+                                    money(r["monthly_fee_paise"]))) for r in rooms], 6)
 
     def build_residents(self, page, user):
         residents = self.hostel.residents(self.token)
         if user["role"] == "RESIDENT":
             resident = residents[0]
+            details = self.hostel.resident_hostel_details(self.token, resident["resident_id"])
             ttk.Label(page, text=f"{resident['full_name']} · {resident['registration_no']}",
                       font=("TkDefaultFont", 13)).pack(anchor="w")
-            ttk.Label(page, text=f"Hostel {resident['hostel_code']} · "
-                                 f"Room {resident['room_number'] or 'Not allocated'} · "
-                                 f"{resident['status']}").pack(anchor="w", pady=8)
+            ttk.Label(page, text=f"Hostel / block: {details['name']} ({details['hostel_code']})"
+                                 f"  ·  {details['address']}").pack(anchor="w", pady=4)
+            warden = f"{details['warden_name']} (employee {details['employee_no']})"
+            if details["warden_phone"]:
+                warden += f"  ·  {details['warden_phone']}"
+            ttk.Label(page, text=f"Warden: {warden}").pack(anchor="w", pady=4)
+            ttk.Label(page, text=f"Room: {resident['room_number'] or 'Not allocated'}"
+                                 f"  ·  Status: {resident['status']}").pack(anchor="w", pady=4)
             stays = self.hostel.stays(self.token, resident["resident_id"])
             self.table(page, [("room", "Room"), ("from", "Check in"), ("to", "Check out")],
                        [(a["allocation_id"], (a["room_number"], a["checked_in_at"][:16],
@@ -227,7 +273,8 @@ class HostelApp:
             try:
                 resident_id = self.selected(table, "resident")
                 resident = next(r for r in residents if r["resident_id"] == resident_id)
-                options = [(f"{r['room_number']} ({r['occupied']}/{r['capacity']} beds)", r["room_id"])
+                options = [(f"{r['room_number']} ({r['occupied']}/{r['capacity']} beds) · "
+                            f"{money(r['monthly_fee_paise'])}/month", r["room_id"])
                            for r in self.hostel.rooms(self.token)
                            if r["hostel_id"] == resident["hostel_id"] and r["status"] == "OPEN"
                            and r["occupied"] < r["capacity"] and r["room_id"] != resident["room_id"]]

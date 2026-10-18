@@ -69,6 +69,18 @@ class AuthService:
     def logout(self, token):
         self.sessions.pop(token, None)
 
+    def reset_password(self, token, target_id, new_password):
+        self.require(token, ("ADMIN",))
+        target = self.store.user(target_id)
+        if not target or target["role"] not in ("WARDEN", "RESIDENT"):
+            raise ValueError("Choose a warden or resident")
+        required(new_password)
+        with self.store.transaction():
+            self.store.set_password(target_id, self.hasher.hash(new_password))
+        for session, user_id in list(self.sessions.items()):
+            if user_id == target_id:
+                self.sessions.pop(session)
+
     def require(self, token, roles=None, hostel_id=None):
         user_id = self.sessions.get(token)
         user = self.store.user(user_id) if user_id else None
@@ -223,7 +235,11 @@ class HostelService:
         self.billing._resident_access(token, resident_id)
         return self.store.allocations(resident_id)
 
-    def add_warden(self, token, username, password, name, employee_no):
+    def resident_hostel_details(self, token, resident_id):
+        _, resident = self.billing._resident_access(token, resident_id)
+        return self.store.hostel_details(resident["hostel_id"])
+
+    def add_warden(self, token, username, password, name, employee_no, phone=""):
         self.auth.require(token, ("ADMIN",))
         required(username, password, name, employee_no)
         with self.store.transaction():
@@ -233,6 +249,7 @@ class HostelService:
                 name.strip(),
                 "WARDEN",
                 self.billing.clock().isoformat(),
+                phone.strip() or None,
             )
             self.store.add_warden(user_id, employee_no.strip())
             return user_id
@@ -249,6 +266,18 @@ class HostelService:
             return self.store.add_hostel(
                 code.strip(), name.strip(), address.strip(), warden_id
             )
+
+    def assign_warden(self, token, hostel_id, warden_id):
+        self.auth.require(token, ("ADMIN",))
+        if not self.store.hostel(hostel_id):
+            raise ValueError("Choose a hostel")
+        warden = next(
+            (w for w in self.store.wardens() if w["warden_id"] == warden_id), None
+        )
+        if not warden or not warden["is_active"]:
+            raise ValueError("Choose an active warden")
+        with self.store.transaction():
+            self.store.set_hostel_warden(hostel_id, warden_id)
 
     def add_room(self, token, hostel_id, number, capacity, monthly_rupees):
         self.auth.require(token, ("ADMIN",))
@@ -317,6 +346,7 @@ class HostelService:
 
     def transfer(self, token, resident_id, room_id):
         user, resident = self._staff_resident(token, resident_id)
+        allocation_id = None
         with self.store.transaction():
             current = self.store.current_allocation(resident_id)
             if resident["status"] != "ENROLLED" or not current:
@@ -324,13 +354,21 @@ class HostelService:
             if current["room_id"] == room_id:
                 raise ValueError("Choose another room")
             room = self._eligible_room(resident, room_id)
-            now = self.billing.clock().isoformat()
-            self.store.end_allocation(current["allocation_id"], now)
-            allocation_id = self.store.add_allocation(
-                resident_id, room_id, now, room["monthly_fee_paise"], user["user_id"]
+            now = self.billing.clock()
+            self.billing.ensure_charges(resident_id, user["user_id"], now)
+            unpaid = sum(
+                c["amount_paise"] - c["paid_paise"]
+                for c in self.store.charges(resident_id)
             )
-            self.billing.ensure_charges(resident_id, user["user_id"])
-            return allocation_id
+            if unpaid == 0:
+                self.store.end_allocation(current["allocation_id"], now.isoformat())
+                allocation_id = self.store.add_allocation(
+                    resident_id, room_id, now.isoformat(),
+                    room["monthly_fee_paise"], user["user_id"]
+                )
+        if unpaid:
+            raise ValueError(f"Pay the outstanding {money(unpaid)} before transfer")
+        return allocation_id
 
     def checkout(self, token, resident_id):
         user, resident = self._staff_resident(token, resident_id)

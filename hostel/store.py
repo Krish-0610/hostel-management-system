@@ -53,22 +53,34 @@ class Store:
     def username(self, username):
         return self._one("SELECT * FROM users WHERE username=?", (username,))
 
-    def add_user(self, username, password_hash, name, role, now):
+    def add_user(self, username, password_hash, name, role, now, phone=None):
         return self.db.execute(
-            "INSERT INTO users(username,password_hash,full_name,role,created_at) VALUES(?,?,?,?,?)",
-            (username, password_hash, name, role, now),
+            "INSERT INTO users(username,password_hash,full_name,role,created_at,phone) VALUES(?,?,?,?,?,?)",
+            (username, password_hash, name, role, now, phone),
         ).lastrowid
+
+    def set_password(self, user_id, password_hash):
+        self.db.execute("UPDATE users SET password_hash=? WHERE user_id=?", (password_hash, user_id))
 
     def add_warden(self, user_id, employee_no):
         self.db.execute("INSERT INTO wardens(warden_id,employee_no) VALUES(?,?)", (user_id, employee_no))
 
     def wardens(self):
-        return self._all("""SELECT w.warden_id,u.full_name,u.username,w.employee_no,u.is_active
+        return self._all("""SELECT w.warden_id,u.full_name,u.username,u.phone,
+                                   w.employee_no,u.is_active
                             FROM wardens w JOIN users u ON u.user_id=w.warden_id
                             ORDER BY u.full_name""")
 
     def hostel(self, hostel_id):
         return self._one("SELECT * FROM hostels WHERE hostel_id=?", (hostel_id,))
+
+    def hostel_details(self, hostel_id):
+        return self._one("""SELECT h.hostel_id,h.hostel_code,h.name,h.address,
+                                   h.warden_id,u.full_name AS warden_name,
+                                   w.employee_no,u.phone AS warden_phone
+                            FROM hostels h JOIN wardens w ON w.warden_id=h.warden_id
+                            JOIN users u ON u.user_id=w.warden_id
+                            WHERE h.hostel_id=?""", (hostel_id,))
 
     def hostels(self):
         return self._all("""SELECT h.*,u.full_name AS warden_name
@@ -80,6 +92,9 @@ class Store:
             "INSERT INTO hostels(hostel_code,name,address,warden_id) VALUES(?,?,?,?)",
             (code, name, address, warden_id),
         ).lastrowid
+
+    def set_hostel_warden(self, hostel_id, warden_id):
+        self.db.execute("UPDATE hostels SET warden_id=? WHERE hostel_id=?", (warden_id, hostel_id))
 
     def room(self, room_id):
         return self._one("SELECT * FROM rooms WHERE room_id=?", (room_id,))
